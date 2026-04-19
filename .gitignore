@@ -1,2 +1,7 @@
 data/*
 .env
+/midscene
+*.zip
+*.xz
+*.gz
+*.tar

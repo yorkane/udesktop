@@ -2,18 +2,21 @@
 # Custom environment initialization script
 # This runs after user is created but before desktop starts
 
+# Resolve correct home directory (handles root's /root vs /home/user)
+USER_HOME=$(eval echo ~$USER)
+
 # Fix user config directory permissions for pulseaudio and code-server
-if [ -n "$USER" ] && [ -d "/home/$USER" ]; then
+if [ -n "$USER" ] && [ -d "$USER_HOME" ]; then
     echo "Fixing user directory permissions..."
-    mkdir -p /home/$USER/.config/pulse
-    mkdir -p /home/$USER/.config/code-server
-    mkdir -p /home/$USER/Desktop
-    chown -R $USER:$USER /home/$USER/.config 2>/dev/null || true
-    chown -R $USER:$USER /home/$USER/Desktop 2>/dev/null || true
+    mkdir -p $USER_HOME/.config/pulse
+    mkdir -p $USER_HOME/.config/code-server
+    mkdir -p $USER_HOME/Desktop
+    chown -R $USER:$USER $USER_HOME/.config 2>/dev/null || true
+    chown -R $USER:$USER $USER_HOME/Desktop 2>/dev/null || true
 fi
 
-# Construct Chrome Launch Arguments
-CHROME_ARGS="--no-sandbox --disable-dev-shm-usage --start-maximized --test-type --no-first-run --no-default-browser-check --disable-search-engine-choice-screen --disable-infobars --password-store=basic"
+# Set up Chrome initial arguments
+CHROME_ARGS="--remote-debugging-port=9222 --load-extension=/opt/switchyomega,/opt/midscene-ext --no-sandbox --disable-dev-shm-usage --start-maximized --test-type --no-first-run --no-default-browser-check --disable-search-engine-choice-screen --disable-infobars --password-store=basic"
 
 if [ -n "$CHROME_PROXY_SERVER" ]; then
     echo "Applying Chrome Proxy: $CHROME_PROXY_SERVER"
@@ -25,9 +28,8 @@ if [ -n "$CHROME_NO_PROXY" ]; then
 fi
 echo "Chrome Args: $CHROME_ARGS"
 
-# Create/Overwrite Chrome desktop shortcut with dynamic args
-mkdir -p /home/$USER/Desktop
-cat > /home/$USER/Desktop/chrome.desktop << EOF
+# Install Chrome .desktop to system-trusted location first
+cat > /usr/share/applications/chrome.desktop << EOF
 [Desktop Entry]
 Version=1.0
 Type=Application
@@ -38,14 +40,20 @@ Icon=google-chrome
 Terminal=false
 Categories=Network;WebBrowser;
 EOF
-chown $USER:$USER /home/$USER/Desktop/chrome.desktop 2>/dev/null || true
-chmod +x /home/$USER/Desktop/chrome.desktop
+chmod +x /usr/share/applications/chrome.desktop
+
+# Copy to user's Desktop (inherits trust from system location)
+mkdir -p $USER_HOME/Desktop
+# By symlinking a .desktop file located in a trusted system directory (/usr/share/applications/),
+# XFCE bypasses the "Untrusted launcher" warning automatically without needing brittle GIO metadata.
+ln -sf /usr/share/applications/chrome.desktop $USER_HOME/Desktop/chrome.desktop
+chown -h $USER:$USER $USER_HOME/Desktop/chrome.desktop 2>/dev/null || true
 
 # Auto-start Chrome if CHROME_AUTO_START is set
 if [ "$CHROME_AUTO_START" = "1" ] || [ "$CHROME_AUTO_START" = "true" ]; then
     echo "Chrome auto-start enabled, will launch after desktop starts..."
-    mkdir -p /home/$USER/.config/autostart
-    cat > /home/$USER/.config/autostart/chrome-autostart.desktop << EOF
+    mkdir -p $USER_HOME/.config/autostart
+    cat > $USER_HOME/.config/autostart/chrome-autostart.desktop << EOF
 [Desktop Entry]
 Type=Application
 Name=Chrome Auto Start
@@ -54,83 +62,49 @@ Hidden=false
 NoDisplay=false
 X-GNOME-Autostart-enabled=true
 EOF
-    chown -R $USER:$USER /home/$USER/.config/autostart 2>/dev/null || true
+    chown -R $USER:$USER $USER_HOME/.config/autostart 2>/dev/null || true
 fi
-
-# Create and register script to trust desktop shortcuts (runs on session login)
-cat > /usr/local/bin/trust-shortcuts.sh << 'EOF'
-#!/bin/bash
-# Wait for desktop to be ready
-# Retry loop to ensure desktop session is fully loaded
-MAX_RETRIES=10
-for ((i=1; i<=MAX_RETRIES; i++)); do
-    if [ -d "$HOME/Desktop" ]; then
-        FOUND=0
-        for file in "$HOME/Desktop/"*.desktop; do
-            if [ -f "$file" ]; then
-                FOUND=1
-                echo "Processing $file..."
-                
-                # Ensure executable
-                chmod +x "$file"
-                
-                # Trust the shortcut
-                # Try with standard session dbus
-                gio set "$file" metadata::trusted yes 2>/dev/null || \
-                # Try forcing a launch if session bus not found (fallback)
-                dbus-launch gio set "$file" metadata::trusted yes 2>/dev/null || true
-            fi
-        done
-        # If we processed files, we can exit, but let's wait a bit more to be sure XFCE picked it up? 
-        # Actually once marked, it should be good.
-        if [ "$FOUND" -eq 1 ]; then
-            break
-        fi
-    fi
-    sleep 2
-done
-
-# Cleanup
-rm -f "$HOME/.config/autostart/trust-shortcuts.desktop"
-EOF
-chmod +x /usr/local/bin/trust-shortcuts.sh
-
-# Create autostart entry for trust script
-mkdir -p /home/$USER/.config/autostart
-cat > /home/$USER/.config/autostart/trust-shortcuts.desktop << EOF
-[Desktop Entry]
-Type=Application
-Name=Trust Shortcuts
-Exec=/usr/local/bin/trust-shortcuts.sh
-Hidden=false
-NoDisplay=true
-X-GNOME-Autostart-enabled=true
-EOF
-chown -R $USER:$USER /home/$USER/.config/autostart 2>/dev/null || true
 
 # Auto-start midscene-pc
 echo "Configuring midscene-pc auto-start..."
-mkdir -p /home/$USER/.config/autostart
-cat > /home/$USER/.config/autostart/midscene-pc.desktop << EOF
+mkdir -p $USER_HOME/.config/autostart
+cat > $USER_HOME/.config/autostart/midscene-pc.desktop << EOF
 [Desktop Entry]
 Type=Application
 Name=Midscene PC
-Exec=sh -c "cd /home/$USER && /usr/local/bin/midscene-pc"
+Exec=sh -c "export DISPLAY=:1000 && cd $USER_HOME && /usr/local/bin/midscene-pc"
 Hidden=false
 NoDisplay=false
 X-GNOME-Autostart-enabled=true
 EOF
-chown -R $USER:$USER /home/$USER/.config/autostart 2>/dev/null || true
+chown -R $USER:$USER $USER_HOME/.config/autostart 2>/dev/null || true
+# Auto-start midscene-relay (Chrome CDP relay for remote access)
+if [ "$MIDSCENE_RELAY_AUTO_START" = "1" ] || [ "$MIDSCENE_RELAY_AUTO_START" = "true" ]; then
+    echo "Configuring midscene-relay auto-start..."
+    mkdir -p $USER_HOME/.config/autostart
+    cat > $USER_HOME/.config/autostart/midscene-relay.desktop << EOF
+[Desktop Entry]
+Type=Application
+Name=Midscene Relay
+Exec=sh -c "sleep 5 && cd /opt/midscene-relay && /usr/local/bin/npx tsx src/server.ts > /proc/1/fd/1 2>&1"
+Hidden=false
+NoDisplay=false
+X-GNOME-Autostart-enabled=true
+EOF
+    chown -R $USER:$USER $USER_HOME/.config/autostart 2>/dev/null || true
+    echo "midscene-relay will auto-start after desktop (ports: ${RELAY_PORT:-3766} SDK, ${CDP_PROXY_PORT:-9223} CDP proxy)"
+fi
 
-# Force reliable xstartup for XFCE
-mkdir -p /home/$USER/.vnc
-cat > /home/$USER/.vnc/xstartup << EOF
+# Force reliable xstartup for XFCE with clipboard sync
+mkdir -p $USER_HOME/.vnc
+cat > $USER_HOME/.vnc/xstartup << EOF
 #!/bin/sh
 unset SESSION_MANAGER
 unset DBUS_SESSION_BUS_ADDRESS
+# Start autocutsel for seamless VNC <-> X11 clipboard sync
+autocutsel -fork -s CLIPBOARD &
+autocutsel -fork -s PRIMARY &
 exec /usr/bin/startxfce4
 EOF
-chmod +x /home/$USER/.vnc/xstartup
-chown -R $USER:$USER /home/$USER/.vnc 2>/dev/null || true
-
-
+chmod +x $USER_HOME/.vnc/xstartup
+chown -R $USER:$USER $USER_HOME/.vnc 2>/dev/null || true

@@ -1,36 +1,62 @@
 FROM gezp/ubuntu-desktop:24.04
 
-# Install rclone and fuse for S3 mounting
-RUN apt-get update && apt-get install -y \
-    rclone \
-    fuse3 \
-    curl \
-    gnupg \
-    && rm -rf /var/lib/apt/lists/*
+ENV DISPLAY=:1000
 
-# Install Node.js 22 from Chinese mirror (npmmirror)
-RUN curl -fsSL https://registry.npmmirror.com/-/binary/node/v22.22.0/node-v22.22.0-linux-x64.tar.xz -o /tmp/node.tar.xz \
-    && tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 \
-    && rm /tmp/node.tar.xz \
-    && node --version && npm --version \
-    && npm install -g nrm \
-    && nrm use taobao \
-    && npm install -g midscene-pc@latest
-
-# Install Google Chrome from Chinese mirror
-RUN curl -fsSL https://registry.npmmirror.com/-/binary/chrome-for-testing/146.0.7651.0/linux64/chrome-linux64.zip -o /tmp/chrome.zip \
-    && apt-get update && apt-get install -y unzip libxss1 libappindicator3-1 libasound2t64 libatk-bridge2.0-0 libgtk-3-0 libgbm1 libnss3 \
-    && unzip /tmp/chrome.zip -d /opt/ \
-    && ln -sf /opt/chrome-linux64/chrome /usr/local/bin/chrome \
-    && rm /tmp/chrome.zip \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install midscene-pc dependencies (WebKitGTK 4.1 with symlinks for 4.0 compatibility)
-RUN apt-get update && apt-get install -y libwebkit2gtk-4.1-0 \
+# System dependencies (all apt installs merged into one layer)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    rclone fuse3 curl gnupg autocutsel xclip imagemagick git unzip jq \
+    libxss1 libappindicator3-1 libasound2t64 libatk-bridge2.0-0 \
+    libgtk-3-0 libgbm1 libnss3 python3-gi python3-gi-cairo \
+    libwebkit2gtk-4.1-0 \
     && ln -sf /usr/lib/x86_64-linux-gnu/libwebkit2gtk-4.1.so.0 /usr/lib/x86_64-linux-gnu/libwebkit2gtk-4.0.so.37 \
     && ln -sf /usr/lib/x86_64-linux-gnu/libjavascriptcoregtk-4.1.so.0 /usr/lib/x86_64-linux-gnu/libjavascriptcoregtk-4.0.so.18 \
     && ldconfig \
     && rm -rf /var/lib/apt/lists/*
+
+# Preload cached assets (cleaned at end of RUN to minimize layer size)
+COPY preload/ /tmp/preload/
+
+# Node.js + Chrome + Extensions (single RUN, all temp files cleaned within same layer)
+RUN set -ex \
+    # --- Node.js ---
+    && NODE_TAR="node-v24.15.0-linux-x64.tar.xz" \
+    && if [ -f /tmp/preload/$NODE_TAR ]; then echo "Using preloaded Node.js..."; cp /tmp/preload/$NODE_TAR /tmp/$NODE_TAR; \
+    else curl -fsSL "https://registry.npmmirror.com/-/binary/node/v24.15.0/$NODE_TAR" -o /tmp/$NODE_TAR; fi \
+    && tar -xJf /tmp/$NODE_TAR -C /usr/local --strip-components=1 \
+    && rm -f /tmp/$NODE_TAR \
+    && npm install -g nrm pnpm \
+    && nrm use taobao \
+    && npm cache clean --force \
+    && node --version && npm --version \
+    # --- SwitchyOmega ---
+    && if [ -f /tmp/preload/switchy.zip ]; then cp /tmp/preload/switchy.zip /tmp/switchy.zip; \
+    else wget -qO /tmp/switchy.zip "https://clients2.google.com/service/update2/crx?response=redirect&acceptformat=crx2,crx3&prodversion=114.0&x=id%3Dhihblcmlaaademjlakdpicchbjnnnkbo%26installsource%3Dondemand%26uc"; fi \
+    && mkdir -p /opt/switchyomega \
+    && (unzip -qo /tmp/switchy.zip -d /opt/switchyomega || true) \
+    && rm -f /tmp/switchy.zip \
+    # --- Midscene.js Extension ---
+    && if [ -f /tmp/preload/midscene-ext.zip ]; then cp /tmp/preload/midscene-ext.zip /tmp/midscene-ext.zip; \
+    else wget -qO /tmp/midscene-ext.zip "https://clients2.google.com/service/update2/crx?response=redirect&acceptformat=crx2,crx3&prodversion=114.0&x=id%3Dgbldofcpkknbggpkmbdaefngejllnief%26installsource%3Dondemand%26uc"; fi \
+    && mkdir -p /opt/midscene-ext \
+    && (unzip -qo /tmp/midscene-ext.zip -d /opt/midscene-ext || true) \
+    && rm -f /tmp/midscene-ext.zip \
+    # --- Google Chrome for Testing ---
+    && if [ -f /tmp/preload/chrome-linux64.zip ]; then cp /tmp/preload/chrome-linux64.zip /tmp/chrome.zip; \
+    else \
+        CHROME_VERSION=$(curl -fsSL https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions.json | jq -r '.channels.Stable.version') \
+        && echo "Downloading Chrome version: ${CHROME_VERSION}" \
+        && curl -fsSL "https://registry.npmmirror.com/-/binary/chrome-for-testing/${CHROME_VERSION}/linux64/chrome-linux64.zip" -o /tmp/chrome.zip; \
+    fi \
+    && unzip -qo /tmp/chrome.zip -d /opt/ \
+    && ln -sf /opt/chrome-linux64/chrome /usr/local/bin/chrome \
+    && rm -f /tmp/chrome.zip \
+    # --- Cleanup preload cache ---
+    && rm -rf /tmp/preload
+
+# Install midscene-relay (Chrome CDP relay for remote Midscene SDK / Playwright access)
+RUN git clone https://github.com/yorkane/midscene-relay.git    /opt/midscene-relay \
+    && cd /opt/midscene-relay \
+    && pnpm install
 
 
 # Install Chrome Icon
@@ -42,22 +68,33 @@ RUN if [ -f /opt/chrome-linux64/product_logo_256.png ]; then \
         curl -fsSL https://upload.wikimedia.org/wikipedia/commons/e/e1/Google_Chrome_icon_%28February_2022%29.svg -o /usr/share/pixmaps/google-chrome.svg; \
     fi
 
-# Create Chrome desktop shortcut
+# Create standard Chrome desktop shortcut with extension sideload
 RUN mkdir -p /etc/skel/Desktop && \
     echo '[Desktop Entry]\n\
 Version=1.0\n\
-Type=Application\n\
 Name=Google Chrome\n\
-Comment=Access the Internet\n\
-Exec=/usr/local/bin/chrome --no-sandbox --disable-dev-shm-usage --start-maximized --test-type --no-first-run --no-default-browser-check --disable-search-engine-choice-screen --disable-infobars --password-store=basic %U\n\
+Exec=/usr/local/bin/chrome --load-extension=/opt/switchyomega,/opt/midscene-ext --no-sandbox --disable-dev-shm-usage --start-maximized --test-type --no-first-run --no-default-browser-check --disable-search-engine-choice-screen --disable-infobars --password-store=basic %U\n\
 Icon=google-chrome\n\
 Terminal=false\n\
+Type=Application\n\
 Categories=Network;WebBrowser;' > /etc/skel/Desktop/chrome.desktop && \
     chmod +x /etc/skel/Desktop/chrome.desktop
+
+
 
 # Add custom kasmvnc startup script with reduced logging and resolution support
 COPY start_kasmvnc.sh /docker_config/start_kasmvnc.sh
 RUN chmod +x /docker_config/start_kasmvnc.sh
+
+# Add custom novnc startup script with fixed home dir path and resolution support
+COPY start_novnc.sh /docker_config/start_novnc.sh
+RUN chmod +x /docker_config/start_novnc.sh
+
+# Inject seamless clipboard bridge into noVNC HTML pages
+COPY novnc_clipboard.js /opt/noVNC/novnc_clipboard.js
+RUN for f in /opt/noVNC/vnc.html /opt/noVNC/vnc_lite.html /opt/noVNC/index.html; do \
+        [ -f "$f" ] && sed -i 's|</body>|<script src="novnc_clipboard.js"></script></body>|' "$f" || true; \
+    done
 
 # Add custom_env_init hook script (runs after user creation)
 COPY custom_env_init.sh /docker_config/custom_env_init.sh
@@ -69,3 +106,13 @@ RUN chmod +x /start.sh
 
 # Set entrypoint
 ENTRYPOINT ["/start.sh"]
+
+
+
+# sudo docker build -t midpc .
+
+# docker save midpc | xz > midpc.tar.xz -v -T16
+
+# xz -d -k < midpc.tar.xz | sudo docker load
+# docker tag midpc wasu-wtvdev-registry-test-registry.cn-hangzhou.cr.aliyuncs.com/pub/midpc
+# docker push wasu-wtvdev-registry-test-registry.cn-hangzhou.cr.aliyuncs.com/pub/midpc

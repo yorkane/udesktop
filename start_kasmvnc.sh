@@ -36,6 +36,17 @@ desktop:
 server:
   http:
     httpd_directory: /usr/share/kasmvnc/www
+
+keyboard:
+  allow_clipboard_down: true
+  allow_clipboard_up: true
+
+data_loss_prevention:
+  clipboard:
+    client_to_server:
+      enabled: true
+    server_to_client:
+      enabled: true
 EOF
 chown $USER:$USER /home/$USER/.vnc/kasmvnc.yaml
 
