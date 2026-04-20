@@ -1,6 +1,6 @@
 services:
   midscene-pc:
-    image: midpc
+    image: ghcr.io/yorkane/midpc
     container_name: midpc
     devices:
       - /dev/fuse:/dev/fuse

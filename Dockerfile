@@ -4,7 +4,7 @@ ENV DISPLAY=:1000
 
 # System dependencies (all apt installs merged into one layer)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    rclone fuse3 curl gnupg autocutsel xclip imagemagick git unzip jq \
+    rclone fuse3 curl gnupg autocutsel xclip imagemagick git unzip jq gdebi \
     libxss1 libappindicator3-1 libasound2t64 libatk-bridge2.0-0 \
     libgtk-3-0 libgbm1 libnss3 python3-gi python3-gi-cairo \
     libwebkit2gtk-4.1-0 \
