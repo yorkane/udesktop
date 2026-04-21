@@ -97,19 +97,6 @@ EOF
     chown -R $USER:$USER $USER_HOME/.config/autostart 2>/dev/null || true
 fi
 
-# Auto-start midscene-pc
-echo "Configuring midscene-pc auto-start..."
-mkdir -p $USER_HOME/.config/autostart
-cat > $USER_HOME/.config/autostart/midscene-pc.desktop << EOF
-[Desktop Entry]
-Type=Application
-Name=Midscene PC
-Exec=sh -c "export DISPLAY=:1000 && cd $USER_HOME && /usr/local/bin/midscene-pc"
-Hidden=false
-NoDisplay=false
-X-GNOME-Autostart-enabled=true
-EOF
-chown -R $USER:$USER $USER_HOME/.config/autostart 2>/dev/null || true
 # Auto-start midscene-relay (Chrome CDP relay for remote access)
 if [ "$MIDSCENE_RELAY_AUTO_START" = "1" ] || [ "$MIDSCENE_RELAY_AUTO_START" = "true" ]; then
     echo "Configuring midscene-relay auto-start..."
@@ -129,14 +116,18 @@ fi
 
 # Force reliable xstartup for XFCE with clipboard sync
 mkdir -p $USER_HOME/.vnc
-cat > $USER_HOME/.vnc/xstartup << EOF
+cat > $USER_HOME/.vnc/xstartup << 'XEOF'
 #!/bin/sh
 unset SESSION_MANAGER
 unset DBUS_SESSION_BUS_ADDRESS
 # Start autocutsel for seamless VNC <-> X11 clipboard sync
 autocutsel -fork -s CLIPBOARD &
 autocutsel -fork -s PRIMARY &
+# Start midscene-relay if enabled
+if [ "$MIDSCENE_RELAY_AUTO_START" = "1" ] || [ "$MIDSCENE_RELAY_AUTO_START" = "true" ]; then
+    (sleep 2 && cd /opt/midscene-relay && /usr/local/bin/npx tsx src/server.ts > /proc/1/fd/1 2>&1) &
+fi
 exec /usr/bin/startxfce4
-EOF
+XEOF
 chmod +x $USER_HOME/.vnc/xstartup
 chown -R $USER:$USER $USER_HOME/.vnc 2>/dev/null || true

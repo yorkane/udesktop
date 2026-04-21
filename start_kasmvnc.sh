@@ -78,6 +78,12 @@ su $USER -c "kasmvncserver :1000 -select-de xfce"
 
 su $USER -c "pulseaudio --start"
 
+# Start midscene-relay if enabled (after VNC is ready)
+if [ "$MIDSCENE_RELAY_AUTO_START" = "1" ] || [ "$MIDSCENE_RELAY_AUTO_START" = "true" ]; then
+    echo "[Service] midscene-relay: starting in background (delay 5s)..."
+    (sleep 5 && su $USER -c "DISPLAY=:1000 cd /opt/midscene-relay && /usr/local/bin/npx tsx src/server.ts" > /proc/1/fd/1 2>&1) &
+fi
+
 # Keep container running without verbose log tailing
 tail -f /dev/null
 
