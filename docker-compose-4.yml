@@ -1,0 +1,78 @@
+# 1. 定义公共基础配置模板（不会作为一个单独的容器启动）
+x-midpc-base: &midpc-base
+  image: midpc
+  devices:
+    - /dev/fuse:/dev/fuse
+  env_file: .env
+  privileged: true
+  shm_size: 4g
+  cgroup: host
+  restart: unless-stopped
+  tty: true
+
+services:
+  # ================= 实例 1 =================
+  midpc-1:
+    <<: *midpc-base               # 继承上面的公共配置
+    container_name: midpc-1
+    ports:
+      - "4001:4000"               # VNC 桌面
+      - "3761:3767"               # Computer Relay
+      - "3771:3768"               # Web Relay
+      - "9231:9223"               # CDP Proxy
+    volumes:
+      # 共享的挂载目录
+      - /onas/share1:/onas/share3
+      - /onas/share2:/onas/share3
+      - /onas/share3:/onas/share3
+      - /mnt/s3:/s3
+      # 独立的下载目录（避免并发下载冲突）
+      - ./data/pc1/Downloads:/home/ubuntu/Downloads
+
+  # ================= 实例 2 =================
+  midpc-2:
+    <<: *midpc-base
+    container_name: midpc-2
+    ports:
+      - "4002:4000"
+      - "3762:3767"
+      - "3772:3768"
+      - "9232:9223"
+    volumes:
+      - /onas/share1:/onas/share3
+      - /onas/share2:/onas/share3
+      - /onas/share3:/onas/share3
+      - /mnt/s3:/s3
+      - ./data/pc2/Downloads:/home/ubuntu/Downloads
+
+  # ================= 实例 3 =================
+  midpc-3:
+    <<: *midpc-base
+    container_name: midpc-3
+    ports:
+      - "4003:4000"
+      - "3763:3767"
+      - "3773:3768"
+      - "9233:9223"
+    volumes:
+      - /onas/share1:/onas/share3
+      - /onas/share2:/onas/share3
+      - /onas/share3:/onas/share3
+      - /mnt/s3:/s3
+      - ./data/pc3/Downloads:/home/ubuntu/Downloads
+
+  # ================= 实例 4 =================
+  midpc-4:
+    <<: *midpc-base
+    container_name: midpc-4
+    ports:
+      - "4004:4000"
+      - "3764:3767"
+      - "3774:3768"
+      - "9234:9223"
+    volumes:
+      - /onas/share1:/onas/share3
+      - /onas/share2:/onas/share3
+      - /onas/share3:/onas/share3
+      - /mnt/s3:/s3
+      - ./data/pc4/Downloads:/home/ubuntu/Downloads

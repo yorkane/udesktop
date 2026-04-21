@@ -5,6 +5,7 @@ ENV DISPLAY=:1000
 # System dependencies (all apt installs merged into one layer)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     rclone fuse3 curl gnupg autocutsel xclip imagemagick git unzip jq gdebi \
+    vlc file-roller \
     libxss1 libappindicator3-1 libasound2t64 libatk-bridge2.0-0 \
     libgtk-3-0 libgbm1 libnss3 python3-gi python3-gi-cairo \
     libwebkit2gtk-4.1-0 \
@@ -49,15 +50,26 @@ RUN set -ex \
     fi \
     && unzip -qo /tmp/chrome.zip -d /opt/ \
     && ln -sf /opt/chrome-linux64/chrome /usr/local/bin/chrome \
-    && rm -f /tmp/chrome.zip \
-    # --- Cleanup preload cache ---
-    && rm -rf /tmp/preload
+    && rm -f /tmp/chrome.zip
 
 # Install midscene-relay (Chrome CDP relay for remote Midscene SDK / Playwright access)
 RUN git clone https://github.com/yorkane/midscene-relay.git    /opt/midscene-relay \
     && cd /opt/midscene-relay \
     && pnpm install
 
+# Pre-install EasyConnect and apply pango fix for Ubuntu 24.04
+RUN git clone https://github.com/du33169/EasyConnect-linux-fix.git /tmp/EasyConnect-linux-fix \
+    && if ls /tmp/preload/*EasyConnect*.deb 1> /dev/null 2>&1; then \
+        echo "Found EasyConnect deb in preload. Installing..." \
+        && gdebi -n /tmp/preload/*EasyConnect*.deb || true; \
+        mkdir -p /etc/skel/Desktop; \
+        [ -f /usr/share/applications/EasyConnect.desktop ] && cp /usr/share/applications/EasyConnect.desktop /etc/skel/Desktop/EasyConnect.desktop && chmod +x /etc/skel/Desktop/EasyConnect.desktop || true; \
+    fi \
+    # Apply pango patch AFTER deb install (deb overwrites the directory)
+    && mkdir -p /usr/share/sangfor/EasyConnect \
+    && cp /tmp/EasyConnect-linux-fix/patch/*.so* /usr/share/sangfor/EasyConnect/ \
+    && rm -rf /tmp/EasyConnect-linux-fix \
+    && rm -rf /tmp/preload
 
 # Install Chrome Icon
 RUN if [ -f /opt/chrome-linux64/product_logo_256.png ]; then \
@@ -94,7 +106,9 @@ RUN chmod +x /docker_config/start_novnc.sh
 COPY novnc_clipboard.js /opt/noVNC/novnc_clipboard.js
 RUN for f in /opt/noVNC/vnc.html /opt/noVNC/vnc_lite.html /opt/noVNC/index.html; do \
         [ -f "$f" ] && sed -i 's|</body>|<script src="novnc_clipboard.js"></script></body>|' "$f" || true; \
-    done
+    done \
+    # Expose window.UI in vnc.html so the clipboard bridge can access rfb
+    && sed -i 's|UI.start|window.UI = UI; UI.start|' /opt/noVNC/vnc.html
 
 # Add custom_env_init hook script (runs after user creation)
 COPY custom_env_init.sh /docker_config/custom_env_init.sh
@@ -109,7 +123,7 @@ ENTRYPOINT ["/start.sh"]
 
 
 
-# sudo docker build -t midpc .
+# sudo docker build -t midpc -t wasu-wtvdev-registry-test-registry.cn-hangzhou.cr.aliyuncs.com/pub/midpc .
 
 # docker save midpc | xz > midpc.tar.xz -v -T16
 

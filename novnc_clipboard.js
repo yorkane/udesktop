@@ -1,113 +1,151 @@
 /**
- * noVNC Seamless Clipboard Bridge
- * Enables browser <-> VNC clipboard sync over HTTP (no Clipboard API needed).
+ * noVNC Seamless Clipboard Bridge v5
+ * Works on HTTP (non-secure context) without Clipboard API.
  *
- * How it works:
- * - Ctrl+V: Intercepts before noVNC, lets browser fire paste event to read
- *   clipboard, sends text to VNC clipboard, then re-sends Ctrl+V to VNC.
- * - Ctrl+C: VNC clipboard changes appear in noVNC's clipboard panel textarea.
- *   If on HTTPS, also auto-copies to browser clipboard.
+ * KEY INSIGHT: We must NOT call preventDefault() on the keydown event.
+ * We only stopImmediatePropagation() to prevent noVNC from seeing it,
+ * then focus a hidden textarea so the browser naturally fires the paste
+ * event on it. This is the only reliable way to read clipboard on HTTP.
  */
 (function () {
   "use strict";
 
-  var CTRL_V_KEYSYM = 0x0076; // 'v'
-  var CTRL_KEYSYM = 0xffe3; // Control_L
+  // ---- Helpers ----
 
-  // Find noVNC's RFB instance (tries multiple known locations)
-  function getRfb() {
-    // noVNC UI module stores it at UI.rfb
-    if (window.UI && window.UI.rfb) return window.UI.rfb;
-    // Some builds expose it directly
-    if (window.rfb) return window.rfb;
-    return null;
+  function getCanvas() {
+    return (
+      document.querySelector("#noVNC_container canvas") ||
+      document.querySelector("canvas")
+    );
   }
 
-  // Send clipboard text to VNC server via noVNC's clipboard textarea
-  function sendClipboardToVnc(text) {
-    // Method 1: Use the clipboard textarea (works with all noVNC versions)
-    var ta = document.getElementById("noVNC_clipboard_text");
+  function getClipboardTextarea() {
+    return document.getElementById("noVNC_clipboard_text");
+  }
+
+  function pushTextToVnc(text) {
+    // Primary: noVNC's clipboard textarea (triggers internal VNC clipboard sync)
+    var ta = getClipboardTextarea();
     if (ta) {
       ta.value = text;
       ta.dispatchEvent(new Event("change", { bubbles: true }));
     }
-    // Method 2: Also try RFB API directly
-    var rfb = getRfb();
-    if (rfb && rfb.clipboardPasteFrom) {
-      rfb.clipboardPasteFrom(text);
-    }
-  }
-
-  // Send Ctrl+V keystroke to VNC session
-  function sendCtrlVToVnc() {
-    var rfb = getRfb();
-    if (!rfb) return;
+    // Bonus: rfb API if available
     try {
-      rfb.sendKey(CTRL_KEYSYM, "ControlLeft", true); // Ctrl down
-      rfb.sendKey(CTRL_V_KEYSYM, "KeyV", true); // V down
-      rfb.sendKey(CTRL_V_KEYSYM, "KeyV", false); // V up
-      rfb.sendKey(CTRL_KEYSYM, "ControlLeft", false); // Ctrl up
-    } catch (e) {
-      console.warn("[Clipboard] Failed to send Ctrl+V to VNC:", e);
+      if (window.UI && window.UI.rfb && window.UI.rfb.clipboardPasteFrom) {
+        window.UI.rfb.clipboardPasteFrom(text);
+      }
+    } catch (e) {}
+  }
+
+  function simulateCtrlV() {
+    try {
+      if (window.UI && window.UI.rfb) {
+        var rfb = window.UI.rfb;
+        rfb.sendKey(0xffe3, "ControlLeft", true);
+        rfb.sendKey(0x0076, "KeyV", true);
+        rfb.sendKey(0x0076, "KeyV", false);
+        rfb.sendKey(0xffe3, "ControlLeft", false);
+        return;
+      }
+    } catch (e) {}
+  }
+
+  function refocusCanvas() {
+    var canvas = getCanvas();
+    if (canvas) canvas.focus({ preventScroll: true });
+  }
+
+  // ---- Hidden Paste Receiver ----
+
+  var pasteReceiver = document.createElement("textarea");
+  pasteReceiver.style.cssText =
+    "position:fixed;left:0;top:0;width:2px;height:2px;opacity:0.01;z-index:99999;";
+  pasteReceiver.setAttribute("tabindex", "-1");
+  pasteReceiver.setAttribute("aria-hidden", "true");
+  pasteReceiver.id = "_novnc_paste_recv";
+
+  function ensurePasteReceiver() {
+    if (!pasteReceiver.parentNode && document.body) {
+      document.body.appendChild(pasteReceiver);
     }
   }
 
-  // --- Browser -> VNC clipboard ---
+  // Ensure it's in the DOM
+  if (document.body) {
+    ensurePasteReceiver();
+  } else {
+    document.addEventListener("DOMContentLoaded", ensurePasteReceiver);
+  }
 
-  var awaitingPaste = false;
+  // ---- Permanent paste listener on our textarea ----
 
-  // Capture Ctrl+V BEFORE noVNC's keyboard handler
+  pasteReceiver.addEventListener(
+    "paste",
+    function (e) {
+      var text = "";
+      if (e.clipboardData) {
+        text = e.clipboardData.getData("text/plain");
+      } else if (window.clipboardData) {
+        text = window.clipboardData.getData("Text");
+      }
+
+      if (text) {
+        console.log("[Clipboard] Pasted:", text.length, "chars");
+        pushTextToVnc(text);
+        setTimeout(simulateCtrlV, 30);
+      }
+
+      // Refocus canvas after a short delay
+      setTimeout(refocusCanvas, 80);
+
+      e.preventDefault();
+      e.stopPropagation();
+    },
+    false
+  );
+
+  // ---- Ctrl+V Interception ----
+  // CRITICAL: Do NOT call e.preventDefault() here!
+  // We only stopImmediatePropagation to block noVNC, then focus our textarea.
+  // The browser will naturally fire a 'paste' event on the focused textarea.
+
   document.addEventListener(
     "keydown",
     function (e) {
-      if ((e.ctrlKey || e.metaKey) && (e.key === "v" || e.keyCode === 86)) {
-        awaitingPaste = true;
-        // Stop noVNC from handling this Ctrl+V (so browser fires paste event)
-        e.stopImmediatePropagation();
-        // Don't preventDefault - let browser trigger 'paste' event
-      }
+      if (!(e.ctrlKey || e.metaKey)) return;
+      if (e.key !== "v" && e.key !== "V" && e.keyCode !== 86) return;
+
+      // Stop noVNC from seeing this Ctrl+V
+      e.stopImmediatePropagation();
+      e.stopPropagation();
+      // Do NOT call e.preventDefault() - let browser fire paste event!
+
+      // Focus our hidden textarea so the paste event lands on it
+      ensurePasteReceiver();
+      pasteReceiver.value = "";
+      pasteReceiver.focus({ preventScroll: true });
+
+      // The browser will now process the Ctrl+V naturally and fire
+      // a 'paste' event on our focused pasteReceiver textarea.
+      // Our paste listener above will handle it.
     },
-    true
-  ); // capture phase = runs first
-
-  // Receive clipboard data from the paste event
-  document.addEventListener(
-    "paste",
-    function (e) {
-      if (!awaitingPaste) return;
-      awaitingPaste = false;
-
-      var text = (e.clipboardData || window.clipboardData).getData(
-        "text/plain"
-      );
-      if (!text) return;
-
-      // 1. Set VNC clipboard content
-      sendClipboardToVnc(text);
-
-      // 2. After a brief delay, send Ctrl+V to VNC so the app pastes
-      setTimeout(sendCtrlVToVnc, 100);
-
-      e.preventDefault();
-    },
-    true
+    true // capture phase - runs before noVNC
   );
 
-  // --- VNC -> Browser clipboard (best-effort, needs HTTPS for full support) ---
+  // ---- VNC -> Browser (clipboard poll) ----
 
-  // Monitor noVNC clipboard textarea for changes from VNC
   var lastVncClipboard = "";
   setInterval(function () {
-    var ta = document.getElementById("noVNC_clipboard_text");
+    var ta = getClipboardTextarea();
     if (!ta || ta.value === lastVncClipboard) return;
     lastVncClipboard = ta.value;
     if (!lastVncClipboard) return;
-
-    // Try Clipboard API (only works on HTTPS / localhost)
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(lastVncClipboard).catch(function () {});
     }
   }, 500);
 
-  console.log("[Clipboard] noVNC clipboard bridge loaded");
+  // ---- Ready ----
+  console.log("[Clipboard] Bridge v5 loaded (HTTP-safe, no preventDefault).");
 })();

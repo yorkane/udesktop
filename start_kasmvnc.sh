@@ -33,29 +33,48 @@ desktop:
     height: ${HEIGHT}
   allow_resize: true
 
-server:
-  http:
-    httpd_directory: /usr/share/kasmvnc/www
+network:
+  protocol: http
+  interface: 0.0.0.0
+  websocket_port: 4000
+  ssl:
+    require_ssl: false
 
-keyboard:
-  allow_clipboard_down: true
-  allow_clipboard_up: true
+user_session:
+  session_type: shared
+  new_session_disconnects_existing_exclusive_session: false
+  concurrent_connections_prompt: false
+  idle_timeout: never
+
+runtime_configuration:
+  allow_client_to_override_kasm_server_settings: true
+  allow_override_standard_vnc_server_settings: true
+  allow_override_list:
+    - pointer.enabled
+    - data_loss_prevention.clipboard.server_to_client.enabled
+    - data_loss_prevention.clipboard.client_to_server.enabled
+    - data_loss_prevention.clipboard.server_to_client.primary_clipboard_enabled
+
+server:
+  auto_shutdown:
+    no_user_session_timeout: never
+    active_user_session_timeout: never
+    inactive_user_session_timeout: never
 
 data_loss_prevention:
   clipboard:
-    client_to_server:
-      enabled: true
     server_to_client:
       enabled: true
+      size: unlimited
+      primary_clipboard_enabled: false
+    client_to_server:
+      enabled: true
+      size: unlimited
 EOF
 chown $USER:$USER /home/$USER/.vnc/kasmvnc.yaml
 
-# Start kasmvnc
-if [ ! -z ${DISABLE_HTTPS+x} ]; then
-  su $USER -c "kasmvncserver :1000 -select-de xfce -interface 0.0.0.0 -websocketPort 4000 -sslOnly 0 -RectThreads $VNC_THREADS"
-else
-  su $USER -c "kasmvncserver :1000 -select-de xfce -interface 0.0.0.0 -websocketPort 4000 -cert $HTTPS_CERT -key $HTTPS_CERT_KEY -RectThreads $VNC_THREADS"
-fi
+# Start kasmvnc (network settings are in kasmvnc.yaml)
+su $USER -c "kasmvncserver :1000 -select-de xfce"
 
 su $USER -c "pulseaudio --start"
 

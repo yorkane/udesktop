@@ -49,6 +49,38 @@ mkdir -p $USER_HOME/Desktop
 ln -sf /usr/share/applications/chrome.desktop $USER_HOME/Desktop/chrome.desktop
 chown -h $USER:$USER $USER_HOME/Desktop/chrome.desktop 2>/dev/null || true
 
+# EasyConnect launcher (if installed)
+if [ -f /usr/share/applications/EasyConnect.desktop ]; then
+    ln -sf /usr/share/applications/EasyConnect.desktop $USER_HOME/Desktop/EasyConnect.desktop
+    chown -h $USER:$USER $USER_HOME/Desktop/EasyConnect.desktop 2>/dev/null || true
+fi
+
+# VLC video player launcher
+if [ -f /usr/share/applications/vlc.desktop ]; then
+    ln -sf /usr/share/applications/vlc.desktop $USER_HOME/Desktop/vlc.desktop
+    chown -h $USER:$USER $USER_HOME/Desktop/vlc.desktop 2>/dev/null || true
+fi
+
+# Directory shortcuts on Desktop
+for entry in "S3:/s3:folder-remote" "Downloads:$USER_HOME/Downloads:folder-download" "ONAS:/onas:folder-documents"; do
+    name=$(echo "$entry" | cut -d: -f1)
+    path=$(echo "$entry" | cut -d: -f2)
+    icon=$(echo "$entry" | cut -d: -f3)
+    cat > /usr/share/applications/dir-${name}.desktop << DEOF
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=${name}
+Exec=thunar ${path}
+Icon=${icon}
+Terminal=false
+Categories=Utility;FileManager;
+DEOF
+    chmod +x /usr/share/applications/dir-${name}.desktop
+    ln -sf /usr/share/applications/dir-${name}.desktop $USER_HOME/Desktop/dir-${name}.desktop
+    chown -h $USER:$USER $USER_HOME/Desktop/dir-${name}.desktop 2>/dev/null || true
+done
+
 # Auto-start Chrome if CHROME_AUTO_START is set
 if [ "$CHROME_AUTO_START" = "1" ] || [ "$CHROME_AUTO_START" = "true" ]; then
     echo "Chrome auto-start enabled, will launch after desktop starts..."
